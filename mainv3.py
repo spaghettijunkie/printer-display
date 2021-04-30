@@ -10,6 +10,8 @@ import time
 import math
 import os
 import pygame
+import datetime
+from pygame.locals import *
 
 DEBUG_MODE = True
 GRAPHICS = True
@@ -22,6 +24,12 @@ class gCode:
             self.parameters = dict()
         else:
             self.parameters = parameters
+
+    def __repr__(self):
+        return "At file position" + str(self.filePosition) + "parameters = " + str(self.parameters)
+
+    def getFilePosition(self):
+        return self.filePosition
 
     def hasParameter(self, key):
         if isinstance(key, bytes):
@@ -47,7 +55,7 @@ class gCode:
         return self.parameters
             
 
-def get(url, verifyCertificate=True): # get response from api
+def get(url:"url to get data from", verifyCertificate=True) -> "response as a requests.get object": # get response from api
     apiToken = "3962233D8F744F6FA469C86B00EEC938"
     print("Getting from url:", url)
     resp = requests.get(url, headers={"Content-Type" : "application/josn", "x-Api-Key" : apiToken}, verify=verifyCertificate)
@@ -55,42 +63,29 @@ def get(url, verifyCertificate=True): # get response from api
     if resp.status_code != 200:
         # This means something went wrong.
         raise Exception('GET {} {}'.format(resp.url, resp.status_code))
-    
+    #time.sleep(1)
     
     return resp
 
 
-def fileExistsInDir(fileName, directory=""):
+def fileExistsInDir(fileName, directory="") -> (bool, "If the file exists in the directory, return true"):
     if fileName in os.listdir(directory):
         return True
     return False
 
-def getValueAfterLetter(gCodeLine, letter):
-    gCodeLine = str(gCodeLine)
-    letter = str(letter)
-    startPos = gCodeLine.find(letter)
-    if (gCodeLine.find(";") < startPos and gCodeLine.find(";") != -1) or startPos == -1:
-        return None
-
-    endPos = startPos + 1
-
-    while endPos < len(gCodeLine):
-        if " " in gCodeLine[endPos] or "\n" in gCodeLine[endPos] or ";" in gCodeLine[endPos]:
-            break
-        endPos += 1
-
-    return gCodeLine[startPos+1:endPos].strip()
-
-
-def gCodeParser(gCodeFile, commandsToInclude = ("G0 ", "G1 ")):
+def gCodeParser(gCodeFile:"File name to read from", commandsToInclude:"Commands to include as movement commands" = ("G0 ", "G1 ")):
     gCodeList = []
+    time.sleep
     print("Reading File")
+    abs
     with open(gCodeFile, "rb") as inFile:
         lenFile = len(inFile.readlines())
         inFile.seek(0)
         for index in range(lenFile):
             if index % pow(10, math.floor(math.log(lenFile, 10))-1) == 0:
-                print("line:", index, " : ", str(100*index/lenFile) + "%")
+                print("line:", index, ":", "{:.2f}".format(100*index/lenFile) + "%")
+            elif index == lenFile - 1:
+                print("line:", index, ":", "100.00%")
 
             gCodeList.append(gCode(inFile.tell()))
             line = inFile.readline().strip().split(b";")
@@ -111,7 +106,7 @@ def gCodeParser(gCodeFile, commandsToInclude = ("G0 ", "G1 ")):
 
 
 # Write the chosen parameters of the gcode file out to a csv file
-def writeCodeList(codeList, params, notFoundChr=""):
+def writeCodeList(codeList, params:"list of parameters to be written together", notFoundChr:"bytes object to put in place of missing data, default will use the value from the previous line"="") -> None:
     last = ["0"]*len(params)
     print("Writing \"out.csv\"")
     with open("out.csv", "wb") as outfile:
@@ -135,47 +130,43 @@ def writeCodeList(codeList, params, notFoundChr=""):
                 outfile.write(bytes(output, "utf-8"))
             
 
-def getParsedGCode(localFile="", writeCSV="out.csv", forceDownload=False):
-    if localFile != "":
-        parsedCode = gCodeParser(localFile)
+def getParsedGCode(localFile : "Local file to read gcode from"="" , writeCSV : "Name of CSV with points \"\" to not write a file"="", forceDownload : "Force downloading of the file currently used. localFile will override this"=False) -> None:
+    if localFile != "": # Force a local file to be used
+        parsedCode = gCodeParser(localFile) 
 
     else:
         print("GETTING UPDATED INFO FROM PRINTER")
         
         respJson = get("http://octopi.local/api/job").json() # Get job status
-
+        
         # Download the file if we don't already have it
         if not fileExistsInDir(respJson["job"]["file"]["name"], LOCAL_GCODE_DIRECTORY) or forceDownload:
-            time.sleep(1) # Make sure we don't send to many requests
+            print("File does not exist locally")
+            time.sleep(1) # Make sure we don't send to many requests at once
             # Get download link
             fileDownload = get("http://octopi.local/api/files/" + respJson["job"]["file"]["origin"] + "/" + respJson["job"]["file"]["name"]).json()["refs"]["download"]
+            print("Remote file located at:", fileDownload, "Downloading file now...")
             # TODO add check that a file is loaded
-            print("File download link:", fileDownload, "\nDownloading now...")
-            time.sleep(1) # Make sure we don't send to many requests
-            downloadedText = get(fileDownload).content
+
+            time.sleep(1) # Make sure we don't send to many requests at once
+            downloadedText = get(fileDownload).content # Get GCode
             
-            print("DONE GETTING DATA\n")
+            print("Succesfully downloaded file\n")
             
             with open(LOCAL_GCODE_DIRECTORY + respJson["job"]["file"]["name"], "wb") as outfile:
                 outfile.write(downloadedText)
+            print("Saved file to:", LOCAL_GCODE_DIRECTORY + respJson["job"]["file"]["name"])
         
         parsedCode = gCodeParser(LOCAL_GCODE_DIRECTORY + respJson["job"]["file"]["name"])
-        if writeCSV != "":
+        if writeCSV != "": # CSV file writing. "" to not make one
+            print("Writing CSV")
             writeCodeList(parsedCode, [b"X", b"Y", b"Z"])
+            print("Done writing CSV")
 
     return parsedCode
 
-# Returns the value of the parameter requested up to the line specified
-def getParameterUpToLine(parsedGCode, parameter, lineNum):
-    index = 0
-    lastP = None
-    while index < lineNum:
-        if parsedGCode[index].hasParameter(parameter):
-            lastP = parsedGCode[index].getParameter(parameter)
-    return lastP
 
-
-def getLayersByComments(parsedGCode):
+def getLayersByComments(parsedGCode) -> "list of lists of GCode lines. Each index in the list represents a layer":
     layerLineNumbers = []
     layers = []
     for lineNum, line in enumerate(parsedGCode):
@@ -218,7 +209,17 @@ def getLayersByZ(parsedGCode):
 
         # RETURNS LAYER LINE NUMBERS!!!!!!!!!!!!!!!!!!!
     return layers
-                
+
+def getPointsAsGCode(layers, transform=[1,1,0,0]):
+    points = []
+    for layerNum, layer in enumerate(layers):
+        points.append([])
+        for command in layer:
+            if command.getParameter(b"command") == b"G0" or command.getParameter(b"command") == b"G1":
+                if command.hasParameter(b"X") and command.hasParameter(b"Y"):
+                    points[layerNum].append([command, [float(command.getParameter(b"X").decode("utf-8"))*transform[0]+transform[2], float(command.getParameter(b"Y").decode("utf-8"))*transform[1]+transform[3]]])
+    return points
+
 def getPoints(layers, transform=[1,1,0,0]):
     points = []
     for layerNum, layer in enumerate(layers):
@@ -229,30 +230,67 @@ def getPoints(layers, transform=[1,1,0,0]):
                     points[layerNum].append([float(command.getParameter(b"X").decode("utf-8"))*transform[0]+transform[2], float(command.getParameter(b"Y").decode("utf-8"))*transform[1]+transform[3]])
     return points
 
-def main(GRAPHICS):
+
+
+def main():
+    global GRAPHICS
     if GRAPHICS:
-        screen = pygame.display.set_mode([1000,800])
+        screen = pygame.display.set_mode([1600,900], RESIZABLE)
         clock = pygame.time.Clock()
         pygame.font.init()
-        myfont = pygame.font.SysFont('Comic Sans MS', 30)
-        textsurface = myfont.render('Some Text', False, (0, 0, 0))
+        myfont = pygame.font.SysFont('Times New Roman', 50)
+        
         points = None
+        pointsAsGCode = None
 
         layer = 0
+        layers = None
         frame = 0
+        filePos = 0
         fileName = None
+        currentPointNumber = 0
         while GRAPHICS:
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+                if event.type == QUIT:
                     pygame.display.quit()
                     GRAPHICS = False
                     break
+                elif event.type == VIDEORESIZE:
+                    screen = pygame.display.set_mode([event.w, event.h], RESIZABLE)
             if frame % 10 == 0:
-                remoteFile = get("http://octopi.local/api/job").json()["job"]["file"]["name"]
-                if remoteFile != fileName:
-                    fileName = remoteFile
-                    points = getPoints(getLayersByComments(getParsedGCode()), [min(screen.get_size())/210, -min(screen.get_size())/210, 0, min(screen.get_size())])
+                remoteFile = get("http://octopi.local/api/job").json()
+                if remoteFile["job"]["file"]["name"] != fileName:
+                    print("New Job Detected")
+                    time.sleep(1)
+                    fileName = remoteFile["job"]["file"]["name"]
+                    #Get new GCode and parse it
+                    layers = getLayersByComments(getParsedGCode())
+
+                    #Get points from the GCode
+                    pointsAsGCode = getPointsAsGCode(layers, [min(screen.get_size())/210, -min(screen.get_size())/210, 0, min(screen.get_size())])
+                    points = getPoints(layers, [min(screen.get_size())/210, -min(screen.get_size())/210, 0, min(screen.get_size())])
+
                     print("New File:", fileName, "\nNumber of layers:", len(points))
+                if remoteFile["progress"]["filepos"] is not None:
+                    filePos = remoteFile["progress"]["filepos"]
+                else:
+                    filePos = float("inf")
+                #filePos = 100000 # TESTLINE --------------------------------------------------------------------------------------------------------------------
+            if remoteFile["state"] != "Printing":
+                layer = (layer+1)%len(pointsAsGCode) # When the file is done, this line will cycle through every layer
+            elif frame % 1 == 0:
+                done = False
+                for layerNumber, layer2 in enumerate(pointsAsGCode):
+                    for pointNumber, pt in enumerate(layer2):
+                        if pt[0].getFilePosition() > filePos:
+                            currentPointNumber = pointNumber
+                            layer = layerNumber
+                            pygame.draw.circle(screen, (0,0,255), [int(point) for point in pt[1]], 5)
+                            done = True
+                            break
+                    if done: 
+                        break
+            
             screen.fill((255,255,255))
             pygame.draw.line(screen, (0,0,127), [0, 0], [min(screen.get_size())]*2)
             pygame.draw.line(screen, (0,0,127), [min(screen.get_size()), 0], [0, min(screen.get_size())])
@@ -260,24 +298,53 @@ def main(GRAPHICS):
             pygame.draw.line(screen, (0,0,127), [0, 0], [min(screen.get_size()), 0])
             pygame.draw.line(screen, (0,0,127), [min(screen.get_size()), 0], [min(screen.get_size())]*2)
             pygame.draw.line(screen, (0,0,127), [0, min(screen.get_size())], [min(screen.get_size())]*2)
-            pygame.draw.circle(screen, (255,0,0), [int(point) for point in points[layer][0]], 5)
-            pygame.draw.circle(screen, (255,0,0), [int(point) for point in points[layer][-1]], 5)
+            #Draw all points as lines
             for pointNum in range(len(points[layer])-1):
                 #print(points[0][pointNum])
-                pygame.draw.line(screen, (0,0,0), points[layer][pointNum], points[layer][pointNum+1])
-            if frame % 1 == 0:
-                layer = (layer+1)%len(points)
+                color = (200,200,200)
+                size = 1
+                if pointNum < currentPointNumber:
+                    color = (0,0,0)
+                    size = 2
+                pygame.draw.line(screen, color, points[layer][pointNum], points[layer][pointNum+1], size)
+            #Draw start/end
+            pygame.draw.circle(screen, (0,255,0), [int(point) for point in points[layer][0]], 5)
+            pygame.draw.circle(screen, (255,0,0), [int(point) for point in points[layer][-1]], 5)
+            #Draw layer#
             
-                
-                
+            textString = ["Layer: {}/{}".format(str(layer+1), str(len(points)))]
+            if "remoteFile" in vars():
+                if remoteFile["progress"]["completion"] is not None: 
+                    textString.append("Progress: {:.2f}%".format(remoteFile["progress"]["completion"]))
+                else:
+                    textString.append("Progress: 0.00%")
+                if remoteFile["state"] == "Printing":
+                    pygame.draw.rect(screen, (0,200,0), [int(min(screen.get_size())), 0, (screen.get_width() - min(screen.get_size()))*layer/len(points), myfont.get_height()])
+                else:
+                    pygame.draw.rect(screen, (50,50,255), [int(min(screen.get_size())), 0, (screen.get_width() - min(screen.get_size()))*layer/len(points), myfont.get_height()])
+
+                textString.append(fileName)
+                if remoteFile["state"] == "Printing":
+                    textString.append("File position: {:.2f}".format(remoteFile["progress"]["filepos"]))
+                    textString.append("Print time: " + str(datetime.timedelta(seconds=remoteFile["progress"]["printTime"])) + "/" + str(datetime.timedelta(seconds=int(remoteFile["job"]["estimatedPrintTime"]))))
+                    textString.append("Print time left: " + str(datetime.timedelta(seconds=remoteFile["progress"]["printTimeLeft"])))
+                else:
+                    textString.append("Print time: " + str(datetime.timedelta(seconds=int(remoteFile["job"]["estimatedPrintTime"]))))
+
+            for i, line in enumerate(textString):
+                screen.blit(myfont.render(str(line), False, (0, 0, 0)), (min(screen.get_size()), myfont.get_height()*i))
             pygame.display.flip()
             clock.tick(5)
             frame += 1
     else:
-        getPoints(getLayersByComments(getParsedGCode()))
+        print(getPoints(getLayersByComments(getParsedGCode(writeCSV=True, forceDownload=True))))
 
+def test(x: int) -> int:
+    return x
 
 if __name__ == "__main__":
-    main(GRAPHICS)
-    
+    print(test)
+    main()
+
+
 

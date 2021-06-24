@@ -56,7 +56,9 @@ class gCode:
             
 
 def get(url:"url to get data from", verifyCertificate=True) -> "response as a requests.get object": # get response from api
-    apiToken = "3962233D8F744F6FA469C86B00EEC938"
+    apiToken = ""
+    with open("API-KEY.txt") as key:
+    	apiToken = key.read()
     print("Getting from url:", url)
     resp = requests.get(url, headers={"Content-Type" : "application/josn", "x-Api-Key" : apiToken}, verify=verifyCertificate)
 

@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+gCodeFiles/*.gcode
+log.txt
+API-KEY.txt
